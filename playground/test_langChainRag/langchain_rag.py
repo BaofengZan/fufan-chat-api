@@ -156,6 +156,9 @@ retriever = chroma_store.as_retriever()
 # 这里从 'hub.pull' 是从某处获取提示的方法
 prompt = hub.pull("rlm/rag-prompt")
 
+# 打印prompt的内容
+# 有个input_variables=['context', 'question']字段
+# 告诉我们应该填充哪个变量
 
 # 自定义函数 format_docs 用于适当地格式化这些片段。
 def format_docs(docs):
@@ -177,7 +180,8 @@ def format_docs(docs):
 RunnableParallel 可以并发执行多个任务，而 RunnablePassthrough 用于需要顺序执行而不需修改的任务。
 """
 
-#
+#StrOutputParser 的核心作用就是把模型生成的输出，比如 ChatGeneration 对象，转换为字符串格式。
+# 在构建链（chains）或者代理（agents）时，要是某个组件要求输入为字符串类型，这个解析器就会派上用场。
 rag_chain = (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | prompt
