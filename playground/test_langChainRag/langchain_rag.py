@@ -10,47 +10,84 @@
 
 import bs4
 from langchain import hub
-from langchain_community.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import WebBaseLoader, PyPDFLoader
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.chat_models import ChatZhipuAI
-from zhipuai import ZhipuAI
+#from langchain_community.chat_models import ChatZhipuAI
+#from zhipuai import ZhipuAI
 import os
 from dotenv import load_dotenv
+
 
 # Step 1. 在“.env”的文件中写入 ZHIPUAI_API_KEY， 并在当前文件中读取zhipu API Keys的信息
 load_dotenv()
 
+
 # Step 2  . 初始化模型, 该行初始化与 智谱 的 GLM - 4  模型进行连接，将其设置为处理和生成响应。
-chat = ChatZhipuAI(
-    model="glm-4",
-    temperature=0.8,
+# chat = ChatZhipuAI(
+#     model="glm-4",
+#     temperature=0.8,
+# )
+# 替换成硅基流动api
+import requests
+from langchain_openai import ChatOpenAI
+# sk-vditflkmaxqsdqeudrkzlpkbeqrbahretirgilfgopjtgvec
+# https://api.siliconflow.cn/v1/
+
+chat = ChatOpenAI(
+    openai_api_base="https://api.siliconflow.cn/v1/",
+    openai_api_key="sk-vditflkmaxqsdqeudrkzlpkbeqrbahretirgilfgopjtgvec",    # app_key
+    model_name="Qwen/Qwen2.5-7B-Instruct",   # 模型名称
 )
+
+class SiliconFlowEmbedding:
+    def __init__(self):
+        self.url = "https://api.siliconflow.cn/v1/embeddings"
+        self.payload = {
+            "model": "BAAI/bge-large-zh-v1.5",
+            "encoding_format": "float"
+        }
+        self.headers = {
+            "Authorization": "Bearer sk-vditflkmaxqsdqeudrkzlpkbeqrbahretirgilfgopjtgvec",
+            "Content-Type": "application/json"
+        }
+
+    def embeddings(self, messages):
+        # 这里可以实现与硅基流动API的交互逻辑
+        self.payload["input"] = messages
+        response = requests.request("POST", self.url, json=self.payload, headers=self.headers)
+        response_json = response.json()
+        return response_json
 
 # Step 3 . WebBaseLoader 配置为专门从 Lilian Weng 的博客文章中抓取和加载内容。它仅针对网页的相关部分（例如帖子内容、标题和标头）进行处理。
 """
 LangChain中关于 文本加载器的集成：
  - 原生实现的：https://python.langchain.com/v0.2/docs/how_to/#document-loaders
  - 外部集成的：https://python.langchain.com/v0.2/docs/integrations/document_loaders/
-
+ 
 bs4：是 Beautiful Soup 4，一个用于从 HTML 和 XML 文件中提取数据的 Python 库。它可以在这种情况下用于解析作为源检索的网页。
 WebBaseLoader： langchain_community.document_loaders 中的一个组件，用于从基于 Web 的源加载文档。
 """
 
-loader = WebBaseLoader(
-    web_paths=("https://lilianweng.github.io/posts/2023-06-23-agent/",),
-    bs_kwargs=dict(
-        parse_only=bs4.SoupStrainer(
-            class_=("post-content", "post-title", "post-header")
-        )
-    ),
+# loader = WebBaseLoader(
+#     web_paths=("https://lilianweng.github.io/posts/2023-06-23-agent/",),
+#     bs_kwargs=dict(
+#         parse_only=bs4.SoupStrainer(
+#             class_=("post-content", "post-title", "post-header")
+#         )
+#     ),
+# )
+
+loader = PyPDFLoader(
+    file_path="/data/RAGLesson/fufan-chat-api/playground/test_langChainRag/deepseekmath2402.03300v3.pdf", 
 )
 
 # LangChain 规范下统一的 Document 对象
 # API Docs：https://api.python.langchain.com/en/latest/documents/langchain_core.documents.base.Document.html#langchain_core.documents.base.Document
 docs = loader.load()
+
 
 # Step 4. 使用 RecursiveCharacterTextSplitter 将内容分割成更小的块，这有助于通过将长文本分解为可管理的大小并有一些重叠来保留上下文来管理长文本。
 """
@@ -61,7 +98,6 @@ LangChain中关于文档切分（Text splitters）：
 """
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 splits = text_splitter.split_documents(docs)
-
 
 # 直观展示文档切分的一个可视化页面：https://chunkviz.up.railway.app/
 # splits 是一个列表，其中每个元素也是一个列表，表示一个文档的分割结果
@@ -106,12 +142,15 @@ splits = text_splitter.split_documents(docs)
 class EmbeddingGenerator:
     def __init__(self, model_name):
         self.model_name = model_name
-        self.client = ZhipuAI()
+        #self.client = ZhipuAI()
+        # 嵌入模型
+        self.client = SiliconFlowEmbedding()  # 使用硅基流动的嵌入模型
 
     def embed_documents(self, texts):
         embeddings = []
         for text in texts:
-            response = self.client.embeddings.create(model=self.model_name, input=text)
+            #response = self.client.embeddings.create(model=self.model_name, input=text)
+            response = self.client.embeddings(text)
             if hasattr(response, 'data') and response.data:
                 embeddings.append(response.data[0].embedding)
             else:
@@ -119,9 +158,11 @@ class EmbeddingGenerator:
                 embeddings.append([0] * 1024)  # 假设嵌入向量维度为 1024
         return embeddings
 
+
     def embed_query(self, query):
         # 使用相同的处理逻辑，只是这次只为单个查询处理
-        response = self.client.embeddings.create(model=self.model_name, input=query)
+        #response = self.client.embeddings.create(model=self.model_name, input=query)
+        response = self.client.embeddings(query)
         if hasattr(response, 'data') and response.data:
             return response.data[0].embedding
         return [0] * 1024  # 如果获取嵌入失败，返回零向量
@@ -132,13 +173,16 @@ embedding_generator = EmbeddingGenerator(model_name="embedding-2")
 # 文本列表
 texts = [content for document in splits for split_type, content in document if split_type == 'page_content']
 
+
 # Step 6. 创建 Chroma VectorStore， 并存入向量。
 # 源码：https://api.python.langchain.com/en/latest/_modules/langchain_chroma/vectorstores.html#Chroma
 chroma_store = Chroma(
     collection_name="example_collection",
     embedding_function=embedding_generator,  # 使用定义的嵌入生成器实例
-    create_collection_if_not_exists=True
+    create_collection_if_not_exists=True,
+    persist_directory="./chroma_langchain_db"
 )
+
 
 # 添加文本到 Chroma VectorStore
 IDs = chroma_store.add_texts(texts=texts)
@@ -154,8 +198,8 @@ IDs = chroma_store.add_texts(texts=texts)
 retriever = chroma_store.as_retriever()
 
 # 这里从 'hub.pull' 是从某处获取提示的方法
+# langchain hub 查看
 prompt = hub.pull("rlm/rag-prompt")
-
 # 打印prompt的内容
 # 有个input_variables=['context', 'question']字段
 # 告诉我们应该填充哪个变量
@@ -180,14 +224,14 @@ def format_docs(docs):
 RunnableParallel 可以并发执行多个任务，而 RunnablePassthrough 用于需要顺序执行而不需修改的任务。
 """
 
-#StrOutputParser 的核心作用就是把模型生成的输出，比如 ChatGeneration 对象，转换为字符串格式。
-# 在构建链（chains）或者代理（agents）时，要是某个组件要求输入为字符串类型，这个解析器就会派上用场。
+#
 rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | chat
-        | StrOutputParser()
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | chat
+    | StrOutputParser()
 )
+
 
 # Step 8. 进行提问
 """
@@ -196,8 +240,9 @@ rag_chain = (
 3. 检索相关文本片段：根据相似度分数，检索器从博客中选择并返回与查询最匹配的文本片段。这些片段包含被认为与回答任务分解问题最相关的信息。
 """
 
-rag_res = rag_chain.invoke("What is Task Decomposition?")
+rag_res = rag_chain.invoke("这篇文档说的是什么?")
 print(rag_res)
+
 
 # Step 9. 此命令指示 vectorstore 删除其保存的整个数据集合。这里的集合是指所有文档（文本片段）及其相应的已被索引并存储在向量存储中的向量表示的集合。
 chroma_store.delete_collection()
