@@ -13,7 +13,7 @@
 
 import bs4
 from langchain import hub
-from langchain_community.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import WebBaseLoader, PyPDFLoader
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
@@ -21,8 +21,10 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.chat_models import ChatZhipuAI
 
-from zhipuai import ZhipuAI
+#from zhipuai import ZhipuAI
 import os
+import requests
+from langchain_openai import ChatOpenAI
 
 from dotenv import load_dotenv
 
@@ -65,22 +67,61 @@ contextualize_q_prompt = ChatPromptTemplate.from_messages(
 
 
 # Step 4. 初始化模型, 该行初始化与 智谱 的 GLM - 4  模型进行连接，将其设置为处理和生成响应。
-chat = ChatZhipuAI(
-    model="glm-4",
-    temperature=0.8,
+# chat = ChatZhipuAI(
+#     model="glm-4",
+#     temperature=0.8,
+# )
+
+chat = ChatOpenAI(
+    openai_api_base="https://api.siliconflow.cn/v1/",
+    openai_api_key="sk-vditflkmaxqsdqeudrkzlpkbeqrbahretirgilfgopjtgvec",    # app_key
+    model_name="Qwen/Qwen2.5-7B-Instruct",   # 模型名称
 )
 
+class SiliconFlowEmbedding:
+    def __init__(self):
+        self.url = "https://api.siliconflow.cn/v1/embeddings"
+        self.payload = {
+            "model": "BAAI/bge-large-zh-v1.5",
+            "encoding_format": "float"
+        }
+        self.headers = {
+            "Authorization": "Bearer sk-vditflkmaxqsdqeudrkzlpkbeqrbahretirgilfgopjtgvec",
+            "Content-Type": "application/json"
+        }
 
+    def embeddings(self, messages):
+        # 这里可以实现与硅基流动API的交互逻辑
+        self.payload["input"] = messages
+        response = requests.request("POST", self.url, json=self.payload, headers=self.headers)
+        response_json = response.json()
+        return response_json
 
-# Step 5 . WebBaseLoader 配置为专门从 Lilian Weng 的博客文章中抓取和加载内容。它仅针对网页的相关部分（例如帖子内容、标题和标头）进行处理。
-loader = WebBaseLoader(
-    web_paths=("https://lilianweng.github.io/posts/2023-06-23-agent/",),
-    bs_kwargs=dict(
-        parse_only=bs4.SoupStrainer(
-            class_=("post-content", "post-title", "post-header")
-        )
-    ),
+# Step 3 . WebBaseLoader 配置为专门从 Lilian Weng 的博客文章中抓取和加载内容。它仅针对网页的相关部分（例如帖子内容、标题和标头）进行处理。
+"""
+LangChain中关于 文本加载器的集成：
+ - 原生实现的：https://python.langchain.com/v0.2/docs/how_to/#document-loaders
+ - 外部集成的：https://python.langchain.com/v0.2/docs/integrations/document_loaders/
+ 
+bs4：是 Beautiful Soup 4，一个用于从 HTML 和 XML 文件中提取数据的 Python 库。它可以在这种情况下用于解析作为源检索的网页。
+WebBaseLoader： langchain_community.document_loaders 中的一个组件，用于从基于 Web 的源加载文档。
+"""
+
+# loader = WebBaseLoader(
+#     web_paths=("https://lilianweng.github.io/posts/2023-06-23-agent/",),
+#     bs_kwargs=dict(
+#         parse_only=bs4.SoupStrainer(
+#             class_=("post-content", "post-title", "post-header")
+#         )
+#     ),
+# )
+
+loader = PyPDFLoader(
+    file_path="/data/RAGLesson/fufan-chat-api/playground/test_langchainRag/deepseekmath2402.03300v3.pdf", 
 )
+
+# LangChain 规范下统一的 Document 对象
+# API Docs：https://api.python.langchain.com/en/latest/documents/langchain_core.documents.base.Document.html#langchain_core.documents.base.Document
 docs = loader.load()
 
 
@@ -93,12 +134,15 @@ splits = text_splitter.split_documents(docs)
 class EmbeddingGenerator:
     def __init__(self, model_name):
         self.model_name = model_name
-        self.client = ZhipuAI()
+        #self.client = ZhipuAI()
+        # 嵌入模型
+        self.client = SiliconFlowEmbedding()  # 使用硅基流动的嵌入模型
 
     def embed_documents(self, texts):
         embeddings = []
         for text in texts:
-            response = self.client.embeddings.create(model=self.model_name, input=text)
+            #response = self.client.embeddings.create(model=self.model_name, input=text)
+            response = self.client.embeddings(text)
             if hasattr(response, 'data') and response.data:
                 embeddings.append(response.data[0].embedding)
             else:
@@ -109,10 +153,12 @@ class EmbeddingGenerator:
 
     def embed_query(self, query):
         # 使用相同的处理逻辑，只是这次只为单个查询处理
-        response = self.client.embeddings.create(model=self.model_name, input=query)
+        #response = self.client.embeddings.create(model=self.model_name, input=query)
+        response = self.client.embeddings(query)
         if hasattr(response, 'data') and response.data:
             return response.data[0].embedding
         return [0] * 1024  # 如果获取嵌入失败，返回零向量
+
 
 
 # 创建嵌入生成器实例
@@ -199,19 +245,19 @@ from langchain_core.messages import HumanMessage
 chat_history = []
 
 # 第一个问题和响应：定义一个问题，并使用该问题和当前（空）聊天历史记录调用 RAG 链。
-question = "What is Task Decomposition?"
+question = "这边论文讲的是什么?"
 ai_msg_1 = rag_chain.invoke({"input": question, "chat_history": chat_history})
-# print("First ans: %s" % ai_msg_1["answer"])
+print("First ans: %s" % ai_msg_1["answer"])
 
 # 然后，用户的问题和 AI 生成的答案分别作为 HumanMessage 实例和响应对象添加到聊天历史记录中。
 chat_history.extend([HumanMessage(content=question), ai_msg_1["answer"]])
 
 # 第二个问题和响应：利用现在包含第一次交流上下文的更新的聊天历史记录，提出后续问题。
-second_question = "What are common ways of doing it?"
+second_question = "这篇文章有什么改进点?"
 ai_msg_2 = rag_chain.invoke({"input": second_question, "chat_history": chat_history})
 
 # RAG 链再次被调用，这次是第二个问题和更新的聊天历史记录，使其在生成响应时能够考虑之前的交互。
-# print("Second ans: %s " % ai_msg_2["answer"])
+print("Second ans: %s " % ai_msg_2["answer"])
 
 # Step 14. 此命令指示 vectorstore 删除其保存的整个数据集合。这里的集合是指所有文档（文本片段）及其相应的已被索引并存储在向量存储中的向量表示的集合。
 chroma_store.delete_collection()
