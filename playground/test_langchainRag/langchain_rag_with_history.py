@@ -312,7 +312,7 @@ splits = text_splitter.split_documents(docs)
 class EmbeddingGenerator:
     def __init__(self, model_name):
         self.model_name = model_name
-        self.client = ZhipuAI()
+        #self.client = ZhipuAI()
 
     def embed_documents(self, texts):
         embeddings = []
