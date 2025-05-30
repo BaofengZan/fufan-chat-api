@@ -9,6 +9,7 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
+from sqlalchemy import text
 
 """
 官方文档：https://docs.sqlalchemy.org/en/20/dialects/mysql.html
@@ -45,17 +46,26 @@ class Address(Base):
 
 # 更新以下字段为你本地数据库的实际用户名、密码和数据库名
 username = 'root'
-hostname = '192.168.110.131'
+hostname = '192.168.1.3'
 database_name = 'test'
 
 from urllib.parse import quote
 
-password = "snowball950123"
+password = "1234"
 
+SQLALCHEMY_DATABASE_URI_BASE = f"mysql+pymysql://{username}:{password}@{hostname}"
 SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{username}:{password}@{hostname}/{database_name}?charset=utf8mb4"
 
 from sqlalchemy import create_engine
 
+
+# 先连接到 MySQL 服务器（不指定数据库）
+# 创建数据库，如果不存在的话
+engine = create_engine(SQLALCHEMY_DATABASE_URI_BASE, echo=True)
+with engine.connect() as conn:
+        conn.execute(text("CREATE DATABASE IF NOT EXISTS test"))
+        conn.commit()
+# 然后连接到指定的数据库
 engine = create_engine(
     SQLALCHEMY_DATABASE_URI,
     echo=True
